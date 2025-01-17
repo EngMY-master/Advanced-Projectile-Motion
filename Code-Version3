@@ -1,0 +1,230 @@
+import sympy as sp
+import math
+
+# Define symbols
+t = sp.Symbol('t', real=True)
+v0_sym, theta_sym, g_sym = sp.symbols('v0 theta g', real=True)
+
+def deg_to_rad(angle_deg: float) -> float:
+    """Convert degrees to radians."""
+    return angle_deg * math.pi / 180
+
+def parse_hill_equation(equation_str: str):
+    """Parse a user-provided hill equation (string) into a Sympy expression."""
+    x = sp.Symbol('x', real=True)
+    try:
+        return sp.sympify(equation_str)
+    except Exception as e:
+        print(f"Error parsing hill equation: {e}")
+        return None
+
+def solve_custom_hill_projectile(v0_val, theta_deg, hill_eq_input, g_val=32.174):
+    """
+    Solve for the intersection point B(x, y) where a projectile with:
+      - initial velocity v0_val (ft/s)
+      - launch angle theta_deg (degrees)
+      - gravity g_val (ft/s^2)
+    intersects a user-defined hill equation hill_eq_input (e.g. '0.05*x**2').
+
+    Returns (x, y) in feet, or None if no positive real solution.
+    """
+    theta_rad = deg_to_rad(theta_deg)
+    hill_expr = parse_hill_equation(hill_eq_input)
+    if hill_expr is None:
+        return None
+
+    # Define parametric projectile eqns:
+    x_t = v0_val * sp.cos(theta_rad) * t
+    y_t = v0_val * sp.sin(theta_rad) * t - 0.5*g_val*(t**2)
+
+    # Intersection: y(t) = hill_expr(x(t))
+    intersection_eq = sp.Eq(y_t, hill_expr.subs(sp.Symbol('x'), x_t))
+
+    # Solve for t
+    try:
+        # sp.solve returns a list of possible solutions in symbolic form
+        t_solutions = sp.solve(intersection_eq, t, dict=True)
+    except Exception as e:
+        print(f"Error solving intersection equation: {e}")
+        return None
+
+    if not t_solutions:
+        print("No solution found for the intersection.")
+        return None
+
+    valid_times = []
+    for sol_dict in t_solutions:
+        if t not in sol_dict:
+            continue
+        t_expr = sol_dict[t]
+        # Check if real and positive
+        if t_expr.is_real:
+            t_val_approx = t_expr.evalf()
+            if t_val_approx > 0:
+                valid_times.append(t_val_approx)
+
+    if not valid_times:
+        print("No physically valid (positive) solution found.")
+        return None
+
+    # Earliest positive time
+    t_final = min(valid_times)
+
+    # Evaluate x(t_final) and y(t_final)
+    x_final_expr = x_t.subs(t, t_final)
+    y_final_expr = y_t.subs(t, t_final)
+
+    x_final = float(x_final_expr.evalf())
+    y_final = float(y_final_expr.evalf())
+    return (x_final, y_final)
+
+def solve_ball_kicked_from_A(x_landing, y_landing, theta_deg, g_val=32.174):
+    """
+    Solve for the initial speed v0 and final speed vf of a ball kicked from ground
+    to land at (x_landing, y_landing) with launch angle theta_deg (in ft-lb-s units).
+
+    We simultaneously solve:
+      x(t) = v0*cos(theta)*t = x_landing
+      y(t) = v0*sin(theta)*t - 0.5*g*t^2 = y_landing
+
+    Returns a dict with { 'Initial Speed (v0)': <value>, 'Final Speed (vf)': <value> }
+    or None if no positive solution is found.
+    """
+    theta_rad = deg_to_rad(theta_deg)
+
+    # Symbolic unknowns
+    t_var = sp.Symbol('t', real=True)
+    v0_var = sp.Symbol('v0', real=True)
+
+    # Projectile eqns:
+    # x(t) = v0*cos(theta)*t
+    # y(t) = v0*sin(theta)*t - 0.5*g*t^2
+    # We want x(t)=x_landing, y(t)=y_landing
+    eq_x = sp.Eq(x_landing, v0_var*sp.cos(theta_rad)*t_var)
+    eq_y = sp.Eq(y_landing, v0_var*sp.sin(theta_rad)*t_var - 0.5*g_val*(t_var**2))
+
+    # Solve the system eq_x, eq_y for (v0_var, t_var)
+    try:
+        solutions = sp.solve([eq_x, eq_y], [v0_var, t_var], dict=True)
+    except Exception as e:
+        print(f"Error solving system for v0, t: {e}")
+        return None
+
+    if not solutions:
+        print("No solutions found for the system.")
+        return None
+
+    valid_solutions = []
+    for sol in solutions:
+        # Each sol is a dict, e.g. { v0_var: expr1, t_var: expr2 }
+        if v0_var not in sol or t_var not in sol:
+            continue
+        v_expr = sol[v0_var]
+        t_expr = sol[t_var]
+
+        # Check if both are real and > 0
+        if v_expr.is_real and t_expr.is_real:
+            v_approx = v_expr.evalf()
+            t_approx = t_expr.evalf()
+            if v_approx > 0 and t_approx > 0:
+                # Valid physical solution
+                valid_solutions.append((float(v_approx), float(t_approx)))
+
+    if not valid_solutions:
+        print("No valid initial speed (v0) found.")
+        return None
+
+    # Pick the first valid solution or apply your own logic to pick
+    v0_val, t_val = valid_solutions[0]
+
+    # Final velocity:
+    # vx = v0*cos(theta)
+    # vy_final = v0*sin(theta) - g*t
+    vx = v0_val*math.cos(theta_rad)
+    vy_final = v0_val*math.sin(theta_rad) - g_val*t_val
+    vf = math.sqrt(vx**2 + vy_final**2)
+
+    return {
+        'Initial Speed (v0)': v0_val,
+        'Final Speed (vf)': vf
+    }
+
+def main():
+    print("Projectile Motion Solver")
+    print("========================")
+    print("Choose the type of problem to solve:")
+    print("1. Projectile on a Non-Linear Hill")
+    print("2. Ball Kicked from Point A")
+    choice = input("Enter 1 or 2: ").strip()
+
+    if choice == '1':
+        print("\n--- Projectile on a Non-Linear Hill ---")
+        try:
+            v0_input = float(input("Enter initial velocity (v0) in ft/s: ").strip())
+        except ValueError:
+            print("Invalid input for v0. Please enter a numerical value.")
+            return
+
+        try:
+            theta_input = float(input("Enter launch angle (theta) in degrees: ").strip())
+        except ValueError:
+            print("Invalid input for theta. Please enter a numerical value.")
+            return
+
+        hill_eq_str = input("Enter the hill equation in terms of x (e.g., 0.05*x**2): ").strip()
+        if not hill_eq_str:
+            print("Hill equation is required.")
+            return
+
+        try:
+            g_input = float(input("Enter acceleration due to gravity (g) in ft/s² [Press Enter for default 32.174]: ").strip() or 32.174)
+        except ValueError:
+            print("Invalid input for g. Please enter a numerical value.")
+            return
+
+        result = solve_custom_hill_projectile(v0_val=v0_input, theta_deg=theta_input, hill_eq_input=hill_eq_str, g_val=g_input)
+        if result:
+            x_b, y_b = result
+            print(f"\nPoint B where the projectile strikes the hill: ({x_b:.2f} ft, {y_b:.2f} ft)")
+        else:
+            print("Could not determine the intersection point.")
+
+    elif choice == '2':
+        print("\n--- Ball Kicked from Point A ---")
+        try:
+            x_landing = float(input("Enter landing x-coordinate (x) in ft: ").strip())
+        except ValueError:
+            print("Invalid input for x. Please enter a numerical value.")
+            return
+
+        try:
+            y_landing = float(input("Enter landing y-coordinate (y) in ft: ").strip())
+        except ValueError:
+            print("Invalid input for y. Please enter a numerical value.")
+            return
+
+        try:
+            theta_input = float(input("Enter launch angle (theta) in degrees: ").strip())
+        except ValueError:
+            print("Invalid input for theta. Please enter a numerical value.")
+            return
+
+        try:
+            g_input = float(input("Enter acceleration due to gravity (g) in ft/s² [Press Enter for default 32.174]: ").strip() or 32.174)
+        except ValueError:
+            print("Invalid input for g. Please enter a numerical value.")
+            return
+
+        result = solve_ball_kicked_from_A(x_landing=x_landing, y_landing=y_landing, theta_deg=theta_input, g_val=g_input)
+
+        if result is not None:
+            print(f"\nInitial Speed (v0): {result['Initial Speed (v0)']:.2f} ft/s")
+            print(f"Final Speed (vf): {result['Final Speed (vf)']:.2f} ft/s")
+        else:
+            print("Could not determine the speeds.")
+
+    else:
+        print("Invalid choice. Please run the program again and select either 1 or 2.")
+
+if __name__ == "__main__":
+    main()
