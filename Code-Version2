@@ -1,0 +1,384 @@
+import sympy as sp
+import math
+
+# Define symbols
+t = sp.symbols('t')
+v0, theta, g = sp.symbols('v0 theta g')
+
+def deg_to_rad(angle_deg: float) -> float:
+    """Convert degrees to radians."""
+    return angle_deg * math.pi / 180
+
+def parse_hill_equation(equation_str: str):
+    """Parse the hill equation input by the user."""
+    x = sp.symbols('x')
+    try:
+        hill_eq = sp.sympify(equation_str)
+        return hill_eq
+    except Exception as e:
+        print(f"Error parsing hill equation: {e}")
+        return None
+
+def solve_flat_ground(s0, y0, v0_val, theta_deg, g_val=9.81):
+    """
+    Solve projectile motion on flat ground.
+
+    Parameters:
+    - s0: Initial horizontal position (m)
+    - y0: Initial vertical position (m)
+    - v0_val: Initial velocity (m/s)
+    - theta_deg: Launch angle (degrees)
+    - g_val: Acceleration due to gravity (m/s²)
+
+    Returns:
+    - Dictionary with calculated R, t, h
+    """
+    theta_rad = deg_to_rad(theta_deg)
+    v0x = v0_val * math.cos(theta_rad)
+    v0y = v0_val * math.sin(theta_rad)
+
+    # Time of flight (when y(t) = y0)
+    t_flight = (v0y + math.sqrt(v0y**2 + 2 * g_val * y0)) / g_val
+
+    # Range
+    R = s0 + v0x * t_flight
+
+    # Maximum height
+    h = y0 + (v0y**2) / (2 * g_val)
+
+    return {'R (m)': R, 't (s)': t_flight, 'h (m)': h}
+
+def solve_linear_incline(s0, y0, v0_val, theta_deg, alpha_deg, g_val=9.81):
+    """
+    Solve projectile motion on a linear inclined plane.
+
+    Parameters:
+    - s0: Initial horizontal position (m)
+    - y0: Initial vertical position (m)
+    - v0_val: Initial velocity (m/s)
+    - theta_deg: Launch angle (degrees)
+    - alpha_deg: Incline angle (degrees)
+    - g_val: Acceleration due to gravity (m/s²)
+
+    Returns:
+    - Dictionary with calculated R, t, h
+    """
+    theta_rad = deg_to_rad(theta_deg)
+    alpha_rad = deg_to_rad(alpha_deg)
+
+    v0x = v0_val * math.cos(theta_rad)
+    v0y = v0_val * math.sin(theta_rad)
+
+    tan_alpha = math.tan(alpha_rad)
+
+    # Time of flight: when projectile intersects the incline
+    # y(t) = y0 + v0y*t - 0.5*g*t^2
+    # y(t) = tan(alpha)*x(t) + y0
+    # tan(alpha)*x(t) + y0 = y0 + v0y*t - 0.5*g*t^2
+    # tan(alpha)*v0x*t = v0y*t - 0.5*g*t^2
+    # (v0y - tan(alpha)*v0x)*t - 0.5*g*t^2 = 0
+    # t*(v0y - tan(alpha)*v0x - 0.5*g*t) = 0
+    # Ignoring t=0 (launch time), solve for t:
+    # v0y - tan(alpha)*v0x - 0.5*g*t = 0
+    # t = (v0y - tan(alpha)*v0x) / (0.5*g)
+
+    denominator = 0.5 * g_val
+    numerator = v0y - tan_alpha * v0x
+
+    if denominator == 0:
+        print("Error: Division by zero encountered while calculating time of flight.")
+        return None
+
+    t_flight = numerator / denominator
+
+    if t_flight <= 0:
+        print("No valid (positive) time of flight found.")
+        return None
+
+    # Range along incline
+    R = s0 + v0x * t_flight
+
+    # Maximum height (not straightforward on incline, so using flat ground formula)
+    h = y0 + (v0y**2) / (2 * g_val)
+
+    return {'R (m)': R, 't (s)': t_flight, 'h (m)': h}
+
+def solve_non_linear_hill(s0, y0, v0_val, theta_deg, hill_eq_input, g_val=9.81):
+    """
+    Solve projectile motion on a non-linear hill.
+
+    Parameters:
+    - s0: Initial horizontal position (m)
+    - y0: Initial vertical position (m)
+    - v0_val: Initial velocity (m/s)
+    - theta_deg: Launch angle (degrees)
+    - hill_eq_input: Hill equation as a string (in terms of x, e.g., "0.05*x**2")
+    - g_val: Acceleration due to gravity (m/s²)
+
+    Returns:
+    - Tuple containing (x, y) coordinates of point B, or None if no solution found.
+    """
+    theta_rad = deg_to_rad(theta_deg)
+
+    # Parse hill equation
+    hill_eq = parse_hill_equation(hill_eq_input)
+    if hill_eq is None:
+        return None
+
+    # Projectile equations
+    x_t = s0 + v0_val * sp.cos(theta_rad) * t
+    y_t = y0 + v0_val * sp.sin(theta_rad) * t - 0.5 * g_val * t**2
+
+    # Intersection condition: y(t) = hill_eq(x(t))
+    intersection_eq = sp.Eq(y_t, hill_eq.subs(sp.symbols('x'), x_t))
+
+    # Solve for t
+    try:
+        t_solutions = sp.solve(intersection_eq, t)
+    except Exception as e:
+        print(f"Error solving intersection equation: {e}")
+        return None
+
+    if not t_solutions:
+        print("No solution found for the intersection.")
+        return None
+
+    # Filter positive real solutions
+    t_valid = []
+    for sol in t_solutions:
+        if sol.is_real:
+            sol_val = sol.evalf()
+            if sol_val > 0:
+                t_valid.append(sol_val)
+
+    if not t_valid:
+        print("No physically valid (positive) solution found.")
+        return None
+
+    # Select the earliest time
+    t_final = min(t_valid)
+
+    # Calculate x and y coordinates
+    x_final = x_t.subs(t, t_final).evalf()
+    y_final = y_t.subs(t, t_final).evalf()
+
+    return (float(x_final), float(y_final))
+
+def main():
+    print("Projectile Motion Solver")
+    print("========================")
+    print("Enter the known variables. Leave blank if unknown.")
+    print("Available variables: s0 (m), y0 (m), v0 (m/s), theta (degrees),")
+    print("R (m), y (m), h (m), t (s), g (m/s²), alpha (degrees), hill_eq (optional)")
+    print("Note: 'alpha' is the incline angle. Leave blank for flat ground.")
+    print("      'hill_eq' defines a non-linear hill. Provide only if you want a non-linear hill.\n")
+
+    # Collect user inputs
+    try:
+        s0_input = input("Enter s0 (m) [default 0]: ").strip()
+        s0 = float(s0_input) if s0_input else 0.0
+    except ValueError:
+        print("Invalid input for s0. Please enter a numerical value.")
+        return
+
+    try:
+        y0_input = input("Enter y0 (m) [default 0]: ").strip()
+        y0 = float(y0_input) if y0_input else 0.0
+    except ValueError:
+        print("Invalid input for y0. Please enter a numerical value.")
+        return
+
+    try:
+        v0_input = input("Enter v0 (m/s): ").strip()
+        v0 = float(v0_input) if v0_input else None
+    except ValueError:
+        print("Invalid input for v0. Please enter a numerical value.")
+        return
+
+    try:
+        theta_input = input("Enter theta (degrees): ").strip()
+        theta = float(theta_input) if theta_input else None
+    except ValueError:
+        print("Invalid input for theta. Please enter a numerical value.")
+        return
+
+    try:
+        R_input = input("Enter R (m): ").strip()
+        R = float(R_input) if R_input else None
+    except ValueError:
+        print("Invalid input for R. Please enter a numerical value.")
+        return
+
+    try:
+        y_input = input("Enter y (m): ").strip()
+        y = float(y_input) if y_input else None
+    except ValueError:
+        print("Invalid input for y. Please enter a numerical value.")
+        return
+
+    try:
+        h_input = input("Enter h (m): ").strip()
+        h = float(h_input) if h_input else None
+    except ValueError:
+        print("Invalid input for h. Please enter a numerical value.")
+        return
+
+    try:
+        t_input = input("Enter t (s): ").strip()
+        t_val = float(t_input) if t_input else None
+    except ValueError:
+        print("Invalid input for t. Please enter a numerical value.")
+        return
+
+    try:
+        g_input = input("Enter g (m/s²) [default 9.81]: ").strip()
+        g = float(g_input) if g_input else 9.81
+    except ValueError:
+        print("Invalid input for g. Please enter a numerical value.")
+        return
+
+    try:
+        alpha_input = input("Enter alpha (degrees): ").strip()
+        alpha = float(alpha_input) if alpha_input else None
+    except ValueError:
+        print("Invalid input for alpha. Please enter a numerical value.")
+        return
+
+    hill_eq_input = input("Enter hill_eq (e.g., 0.05*x**2) [leave blank if not applicable]: ").strip()
+    hill_eq = hill_eq_input if hill_eq_input else None
+
+    # Determine terrain type
+    terrain = None
+    if hill_eq:
+        terrain = 'non_linear'
+    elif alpha:
+        terrain = 'linear'
+    else:
+        terrain = 'flat'
+
+    # Based on terrain, set up and solve equations
+    if terrain == 'flat':
+        # Flat Ground
+        # Known: s0, y0, v0, theta, g
+        # Unknowns: R, t, h
+        # Possible knowns: some of R, t, h
+        # We'll set up equations based on what's missing
+        equations = []
+        variables = {}
+
+        # Define equations based on known and unknown variables
+        # y(t) = y0 = y(t) = y0 + v0y*t - 0.5*g*t^2
+        # x(t) = s0 + v0x*t
+        # R = x(t)
+        # h = y0 + (v0y^2)/(2*g)
+
+        if not R and not t_val and not h:
+            # All unknowns need to be calculated
+            if v0 is None or theta is None:
+                print("Insufficient data to calculate R, t, h.")
+                return
+            results = solve_flat_ground(s0, y0, v0, theta, g)
+            print("\nCalculated Unknowns:")
+            for key, value in results.items():
+                print(f"{key}: {value:.2f}")
+            return
+
+        if v0 is not None and theta is not None:
+            # Calculate t and R and h
+            results = solve_flat_ground(s0, y0, v0, theta, g)
+            # Override known variables if provided
+            if R is not None:
+                results['R (m)'] = R
+            if t_val is not None:
+                results['t (s)'] = t_val
+            if h is not None:
+                results['h (m)'] = h
+            print("\nCalculated Unknowns:")
+            for key, value in results.items():
+                print(f"{key}: {value:.2f}")
+            return
+
+        # More complex scenarios can be handled here
+        print("Please provide either all initial conditions or specify which variables to solve.")
+        return
+
+    elif terrain == 'linear':
+        # Linear Inclined Plane
+        # Known: s0, y0, v0, theta, alpha, g
+        # Unknowns: R, t, h
+        # Similar handling as flat ground
+        if v0 is None or theta is None or alpha is None:
+            print("Insufficient data to calculate R, t, h for linear inclined plane.")
+            return
+
+        results = solve_linear_incline(s0, y0, v0, theta, alpha, g)
+        if results:
+            # Override known variables if provided
+            if R is not None:
+                results['R (m)'] = R
+            if t_val is not None:
+                results['t (s)'] = t_val
+            if h is not None:
+                results['h (m)'] = h
+            print("\nCalculated Unknowns:")
+            for key, value in results.items():
+                print(f"{key}: {value:.2f}")
+        else:
+            print("Could not determine the intersection point.")
+        return
+
+    elif terrain == 'non_linear':
+        # Non-Linear Hill
+        # Known: s0, y0, v0, theta, g, hill_eq
+        # Unknowns: R, t, h, possibly y at R
+        # Allow R, y, h, t to be provided or solved
+        if v0 is None or theta is None or hill_eq is None:
+            print("Insufficient data to calculate intersection point for non-linear hill.")
+            return
+
+        # Set up equations
+        # x(t) = s0 + v0*cos(theta)*t
+        # y(t) = y0 + v0*sin(theta)*t - 0.5*g*t^2
+        # Intersection with hill: y(t) = hill_eq(x(t))
+
+        # If R and y are provided, we can verify
+        if R is not None and y is not None:
+            # Verify if (R, y) satisfies projectile and hill equations
+            # Check y = y(t) and y = hill_eq(R)
+            # y(t) = y0 + v0y*t - 0.5*g*t^2
+            # x(t) = s0 + v0x*t = R
+            # t = (R - s0) / (v0x)
+            theta_rad = deg_to_rad(theta)
+            v0x = v0 * math.cos(theta_rad)
+            v0y = v0 * math.sin(theta_rad)
+
+            if v0x == 0:
+                print("v0x is zero, projectile does not move horizontally.")
+                return
+
+            t_calc = (R - s0) / v0x
+            y_calc = y0 + v0y * t_calc - 0.5 * g * t_calc**2
+            hill_y = eval(str(parse_hill_equation(hill_eq_input).subs(sp.symbols('x'), R)))
+
+            if abs(y_calc - y) < 1e-2 and abs(y - hill_y) < 1e-2:
+                print("\nThe provided R and y are consistent with the projectile and hill equations.")
+            else:
+                print("\nThe provided R and y are NOT consistent with the projectile and hill equations.")
+            return
+
+        # Else, solve for (x, y)
+        # For simplicity, solve for t and then get (x, y)
+        result = solve_non_linear_hill(s0, y0, v0, theta, hill_eq_input, g)
+        if result:
+            x_b, y_b = result
+            print(f"\nPoint B where the projectile strikes the hill: ({x_b:.2f} m, {y_b:.2f} m)")
+        else:
+            print("Could not determine the intersection point.")
+        return
+
+    else:
+        print("Unknown terrain type.")
+        return
+
+if __name__ == "__main__":
+    main()
