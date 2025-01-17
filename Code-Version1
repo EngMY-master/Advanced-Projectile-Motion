@@ -1,0 +1,199 @@
+import sympy as sp
+import math
+
+# Define symbols
+s0, y0, v0, theta, R, y, h, t, g, alpha = sp.symbols('s0 y0 v0 theta R y h t g alpha')
+
+def deg_to_rad(angle_deg: float) -> float:
+    """Convert degrees to radians."""
+    return angle_deg * math.pi / 180
+
+def get_equations(include_alpha: bool, flat_ground: bool):
+    """
+    Return the projectile motion equations.
+    If include_alpha is True, include the inclined plane landing condition.
+    If flat_ground is True, adjust equations for flat ground (y0 = y).
+    """
+    eq1 = sp.Eq(R, s0 + v0 * sp.cos(theta) * t)  # Horizontal motion
+    eq2 = sp.Eq(y, y0 + v0 * sp.sin(theta) * t - 0.5 * g * t**2)  # Vertical motion
+
+    if include_alpha:
+        # Inclined plane equation: y = x * tan(alpha) + y0
+        eq_incline = sp.Eq(y, (s0 + v0 * sp.cos(theta) * t) * sp.tan(alpha) + y0)
+        return [eq1, eq2, eq_incline]
+    elif flat_ground:
+        # When y0 = y and there's no incline, h is calculated separately
+        eq3 = sp.Eq(h, (v0 * sp.sin(theta))**2 / (2 * g))
+        return [eq1, eq2, eq3]
+    else:
+        # Standard projectile motion with different y0 and y
+        eq3 = sp.Eq(h, ((v0 * sp.sin(theta))**2 + 2 * g * y0) / (2 * g))
+        return [eq1, eq2, eq3]
+
+def solve_projectile(knowns: dict, include_alpha: bool):
+    """
+    Solve the projectile-motion system.
+    If include_alpha is True, consider the incline angle.
+    If flat_ground is True (y0 = y and no incline), handle separately.
+    """
+    # Determine if flat ground
+    flat_ground = False
+    if not include_alpha:
+        if 'y0' in knowns and 'y' in knowns and knowns['y0'] == knowns['y']:
+            flat_ground = True
+
+    equations = get_equations(include_alpha, flat_ground)
+
+    # Default gravity if not provided
+    if 'g' not in knowns:
+        knowns['g'] = 9.81
+
+    # Prepare substitution dictionary
+    subs = {}
+    for key, value in knowns.items():
+        if key == 'theta' or key == 'alpha':
+            subs[sp.Symbol(key)] = deg_to_rad(value)  # Convert to radians
+        else:
+            subs[sp.Symbol(key)] = value
+
+    # Substitute known values into equations
+    equations_subbed = [eq.subs(subs) for eq in equations]
+
+    # Determine unknowns
+    all_vars = {s0, y0, v0, theta, R, y, h, t, g, alpha}
+    known_vars = set(sp.Symbol(k) if k not in ['theta', 'alpha'] else sp.Symbol(k) for k in knowns.keys())
+    unknown_vars = list(all_vars - known_vars)
+
+    # Adjust unknown_vars based on scenario
+    if include_alpha:
+        # Inclined plane scenario
+        # Typically, solve for R and t (h can be computed if needed)
+        # Remove h from unknowns if not needed
+        unknown_vars = [var for var in unknown_vars if var != h]
+    elif flat_ground:
+        # Flat ground with y0 = y
+        # Solve for R and t, compute h separately
+        unknown_vars = [var for var in unknown_vars if var != h]
+    else:
+        # Standard projectile with different y0 and y
+        pass  # No change
+
+    # Solve the system
+    solution_set = sp.solve(equations_subbed, unknown_vars, dict=True)
+
+    if not solution_set:
+        return "Insufficient or inconsistent data to solve for unknowns."
+
+    physical_solutions = []
+    for candidate in solution_set:
+        candidate_evals = {}
+        try:
+            for symb, expr in candidate.items():
+                candidate_evals[symb] = expr.evalf()
+        except:
+            continue  # Skip if evaluation fails
+
+        # If time t is among the unknowns, ensure it's positive
+        if t in candidate_evals:
+            try:
+                t_val = float(candidate_evals[t])
+                if flat_ground:
+                    # Exclude t=0 if y0 = y
+                    if 'y0' in knowns and 'y' in knowns and knowns['y0'] == knowns['y']:
+                        if abs(t_val) < 1e-6:
+                            continue  # Skip the trivial solution
+                if t_val <= 0:
+                    # Negative or zero time is unphysical, skip
+                    continue
+            except (TypeError, ValueError):
+                # If we cannot convert t to float, skip this solution
+                continue
+
+        physical_solutions.append(candidate_evals)
+
+    if not physical_solutions:
+        return "No physically valid solution found."
+
+    # Select the first valid solution
+    best_solution = physical_solutions[0]
+
+    # Prepare final answers
+    final_answers = {}
+    for var in unknown_vars:
+        if var in best_solution:
+            final_answers[var] = best_solution[var]
+        else:
+            final_answers[var] = subs.get(var, None)
+
+    # Convert radians back to degrees where necessary and format
+    for k, val in final_answers.items():
+        if val is None:
+            continue
+        if k == theta or k == alpha:
+            final_answers[k] = math.degrees(float(val))
+        else:
+            final_answers[k] = float(val)
+
+    # If flat_ground is True, compute h separately
+    if flat_ground:
+        if h not in final_answers:
+            if 'v0' in knowns and 'theta' in knowns:
+                h_val = (knowns['v0'] * math.sin(deg_to_rad(knowns['theta'])))**2 / (2 * knowns['g'])
+                final_answers[h] = h_val
+
+    return final_answers
+
+def main():
+    print("Projectile Motion Solver")
+    print("========================")
+    print("Enter the known variables. Leave blank if unknown.")
+    print("Available variables: s0 (m), y0 (m), v0 (m/s), theta (degrees),")
+    print("R (m), y (m), h (m), t (s), g (m/s²), alpha (degrees)")
+    print("Note: 'alpha' is the incline angle. Leave blank for flat ground.")
+
+    user_input = {}
+    include_alpha = False  # Flag to determine if incline is considered
+
+    for var in ['s0', 'y0', 'v0', 'theta', 'R', 'y', 'h', 't', 'g', 'alpha']:
+        value = input(f"Enter {var}: ").strip()
+        if value:
+            try:
+                user_input[var] = float(value)
+                if var == 'alpha':
+                    include_alpha = True
+            except ValueError:
+                print(f"Invalid input for {var}. Please enter a numerical value.")
+                return
+
+    # Determine if inclined plane is considered
+    if include_alpha and 'alpha' not in user_input:
+        print("Incline angle (alpha) not provided. Assuming flat ground.")
+        include_alpha = False
+
+    # Determine if flat ground (y0 = y) and no incline
+    flat_ground = False
+    if not include_alpha:
+        if 'y0' in user_input and 'y' in user_input and user_input['y0'] == user_input['y']:
+            flat_ground = True
+
+    # Solve for unknowns
+    result = solve_projectile(user_input, include_alpha)
+
+    # Display results
+    if isinstance(result, str):
+        print(result)
+    else:
+        print("\nCalculated Unknowns:")
+        for symb_obj, val in result.items():
+            var_str = str(symb_obj)
+            # Only attempt to format if val is not None
+            if val is not None:
+                if symb_obj == theta or symb_obj == alpha:
+                    print(f"{var_str}: {val:.2f} degrees")
+                else:
+                    print(f"{var_str}: {val:.2f}")
+            else:
+                print(f"{var_str}: N/A")
+
+if __name__ == "__main__":
+    main()
